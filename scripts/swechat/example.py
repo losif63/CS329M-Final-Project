@@ -1,34 +1,42 @@
 """Assemble a model input for one comment sentence.
 
-The conversation for a comment is every turn row of the same session with
-turn_number < source_file.turn_number; it is not stored, only derived here.
+The conversation for a comment is every turn of the same session with
+turn_number < source_file.turn_number, rendered compactly (conversation.py): user prompts,
+assistant responses and summaries in full; agent thinking and tool calls as one-line stubs.
 """
 
 from __future__ import annotations
 
+import sys
+from functools import lru_cache
 from pathlib import Path
 
 import duckdb
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from conversation import build_items, items_before, render_text  # noqa: E402
+
 DB = Path(__file__).resolve().parents[2] / "data/swechat/db"
-CONVERSATION_TURN_TYPES = ("user_prompt", "system_injected", "assistant_response", "assistant_thinking",
-                           "tool_use", "tool_result", "summary")
+# ~75k tokens: covers all but ~1% of sessions in full; longer ones keep the most recent context
+DEFAULT_MAX_TOTAL_CHARS = 300_000
 
 
-def format_turn(turn_type: str, tool_name: str | None, content: str | None, max_turn_chars: int) -> str:
-    head = f"[{turn_type} {tool_name}]" if turn_type == "tool_use" and tool_name else f"[{turn_type}]"
-    text = (content or "").strip()
-    if len(text) > max_turn_chars:
-        text = text[:max_turn_chars] + f" …[+{len(text) - max_turn_chars} chars]"
-    return f"{head} {text}"
+@lru_cache(maxsize=64)
+def _session_items(db: str, session_id: str) -> tuple[dict, ...]:
+    rows = duckdb.connect().execute(f"""
+        SELECT turn_number, turn_type, tool_name, content, file_path, command
+        FROM read_parquet('{Path(db) / "turn.parquet"}') WHERE session_id = ? ORDER BY turn_number""",
+                                    [session_id]).fetchall()
+    return tuple(build_items(rows))
 
 
-def build_example(comment_id: int, max_turn_chars: int = 500, max_total_chars: int = 20000,
-                  db: Path = DB, con: duckdb.DuckDBPyConnection | None = None) -> tuple[str, str, str]:
+def build_example(comment_id: int, max_total_chars: int | None = DEFAULT_MAX_TOTAL_CHARS,
+                  max_turn_chars: int | None = None, db: Path = DB,
+                  con: duckdb.DuckDBPyConnection | None = None) -> tuple[str, str, str]:
     """Return (sentence, source_file_content, conversation_text) for a comment id.
 
-    Turns are formatted in order, each truncated to max_turn_chars; when the
-    whole conversation exceeds max_total_chars the oldest turns are dropped.
+    The whole session before the write is included. Text turns can be capped with
+    `max_turn_chars`; if the result exceeds `max_total_chars`, the oldest items are dropped.
     """
     con = con or duckdb.connect()
     row = con.execute(f"""
@@ -39,16 +47,5 @@ def build_example(comment_id: int, max_turn_chars: int = 500, max_total_chars: i
     if not row:
         raise KeyError(f"comment id {comment_id} not found")
     sentence, source, session_id, turn_number = row[0]
-    turns = con.execute(f"""
-        SELECT turn_type, tool_name, content FROM read_parquet('{db / "turn.parquet"}')
-        WHERE session_id = ? AND turn_number < ? AND turn_type IN {CONVERSATION_TURN_TYPES}
-        ORDER BY turn_number""", [session_id, turn_number]).fetchall()
-    kept: list[str] = []
-    total = 0
-    for tt, tn, content in reversed(turns):  # keep the most recent context
-        s = format_turn(tt, tn, content, max_turn_chars)
-        if total + len(s) + 1 > max_total_chars:
-            break
-        kept.append(s)
-        total += len(s) + 1
-    return sentence, source, "\n".join(reversed(kept))
+    items = items_before(list(_session_items(str(db), session_id)), turn_number)
+    return sentence, source, render_text(items, max_total_chars, max_turn_chars)

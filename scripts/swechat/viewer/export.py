@@ -5,11 +5,11 @@
     s/<k>.js      window.SWECHAT_SHARD(k, {comments: {comment_id: {...}}, sources: {...}, turns: [...]})
 
 One shard per session, loaded on demand by the page (script tags, so it also works from disk).
-A comment's conversation is turns[turn_end - turn_count : turn_end] of its session shard: the last
-`max_turns` turns before the write that produced its source version. Shards only keep turns inside
-some comment's window; `turns_before_window` counts the earlier ones.
+Each shard holds the session's compact conversation (conversation.build_items: text turns in full,
+agent work as one-line stubs). A comment's conversation is items[:item_end], with a work stub that
+spans its write turn clipped to the part before it, so every comment sees its whole session prefix.
 
-Usage: python scripts/swechat/viewer/export.py [--db DIR] [--out DIR] [--max-turns 50] [--max-turn-chars 1500]
+Usage: python scripts/swechat/viewer/export.py [--db DIR] [--out DIR] [--max-text-chars 20000]
 """
 
 from __future__ import annotations
@@ -22,14 +22,17 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 
+import sys
+
 import duckdb
 import pyarrow.parquet as pq
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from conversation import build_items  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 DB = ROOT / "data/swechat/db"
 HERE = Path(__file__).resolve().parent
-TURN_TYPES = {"user_prompt", "system_injected", "assistant_response", "assistant_thinking",
-              "tool_use", "tool_result", "summary"}
 LABEL_CHARS = 90
 # surface markers of session context (a rough proxy for browsing, not a label)
 MARKER_RE = re.compile("|".join([
@@ -62,8 +65,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", type=Path, default=DB, help="directory with the parquet tables")
     ap.add_argument("--out", type=Path, default=ROOT / "data/swechat/viewer_site")  # gitignored
-    ap.add_argument("--max-turns", type=int, default=50)
-    ap.add_argument("--max-turn-chars", type=int, default=1500)
+    ap.add_argument("--max-text-chars", type=int, default=20000,
+                    help="cap for a single text turn in the viewer (pasted logs can be huge)")
     args = ap.parse_args()
     db, con = args.db, duckdb.connect()
 
@@ -111,48 +114,39 @@ def main() -> None:
     def flush(sid: str, turns: list) -> None:
         nonlocal n_unplaced
         cs = by_session[sid]
-        nums = [t[0] for t in turns]
-        keep: set[int] = set()
-        ends = {}
-        for c in cs:
-            end = bisect.bisect_left(nums, sources[c["source_id"]]["turn_number"])
-            ends[c["id"]] = end
-            keep.update(range(max(0, end - args.max_turns), end))
-        kept_idx = sorted(keep)
+        last_write = max(sources[c["source_id"]]["turn_number"] for c in cs)
+        items = build_items([t for t in turns if t[0] < last_write])
+        for it in items:
+            if "x" in it and len(it["x"]) > args.max_text_chars:
+                it["x"] = it["x"][:args.max_text_chars] + f"\n…[truncated {len(it['x']) - args.max_text_chars} chars]"
+        starts = [it["t"] for it in items]
         shard_comments = {}
         for c in cs:
-            end = ends[c["id"]]
-            n = min(args.max_turns, end)
+            write = sources[c["source_id"]]["turn_number"]
             shard_comments[c["id"]] = {
                 "source_id": c["source_id"], "kind": c["kind"], "full_comment": c["full_comment"],
-                "sentences": c["sentences"], "turn_end": bisect.bisect_left(kept_idx, end),
-                "turn_count": n, "turns_before_window": end - n}
+                "sentences": c["sentences"], "item_end": bisect.bisect_left(starts, write)}
             n_unplaced += sum(x["span"] is None for x in c["sentences"])
         shard = {"comments": shard_comments,
                  "sources": {str(c["source_id"]): sources[c["source_id"]] for c in cs},
-                 "turns": [turns[j] for j in kept_idx]}
+                 "items": items}
         k = sidx[sid]
         (args.out / "s" / f"{k}.js").write_text(f"window.SWECHAT_SHARD({k}," + js_payload(shard) + ");\n")
         pending.discard(sid)
 
-    def clip(text: str | None) -> str:
-        text = text or ""
-        if len(text) > args.max_turn_chars:
-            return text[:args.max_turn_chars] + f"\n…[truncated {len(text) - args.max_turn_chars} chars]"
-        return text
-
     cur_sid, cur_turns = None, []
     pf = pq.ParquetFile(db / "turn.parquet")
-    for batch in pf.iter_batches(batch_size=50_000, columns=["session_id", "turn_number", "turn_type", "tool_name", "content"]):
+    cols_needed = ["session_id", "turn_number", "turn_type", "tool_name", "content", "file_path", "command"]
+    for batch in pf.iter_batches(batch_size=50_000, columns=cols_needed):
         cols = batch.to_pydict()
-        for sid, tn, tt, tool, content in zip(cols["session_id"], cols["turn_number"], cols["turn_type"],
-                                             cols["tool_name"], cols["content"]):
+        for sid, tn, tt, tool, content, fpath, cmd in zip(*(cols[c] for c in cols_needed)):
             if sid != cur_sid:
                 if cur_sid in pending:
                     flush(cur_sid, cur_turns)
                 cur_sid, cur_turns = sid, []
-            if sid in pending and tt in TURN_TYPES:
-                cur_turns.append([tn, tt, tool, clip(content)])
+            if sid in pending:
+                # tool results are never shown: drop their content early
+                cur_turns.append((tn, tt, tool, None if tt == "tool_result" else content, fpath, cmd))
     if cur_sid in pending:
         flush(cur_sid, cur_turns)
     for sid in list(pending):  # sessions with no turn rows at all
@@ -169,7 +163,7 @@ def main() -> None:
         index.append([c["id"], sidx[s["session_id"]], s["language"] or "?", c["kind"], label, marker])
     stats = json.loads((db / "stats.json").read_text())
     (args.out / "index.js").write_text("window.SWECHAT_INDEX = " + js_payload({
-        "sessions": session_ids, "max_turns": args.max_turns, "comments": index,
+        "sessions": session_ids, "comments": index,
         "n_sentences": sum(len(c["sentences"]) for c in ordered), "stats": stats}) + ";\n")
     shutil.copy(HERE / "index.html", args.out / "index.html")
     shutil.copy(HERE / "space_README.md", args.out / "README.md")

@@ -150,8 +150,14 @@ One row per newly added, agent-written comment sentence.
 - Within a session, only the first `(file_path, normalised sentence)` is kept.
 
 ## Model inputs
-`scripts/swechat/example.py: build_example(comment_id, max_turn_chars=500, max_total_chars=20000)` returns
-`(sentence, source_file_content, conversation_text)`. The conversation is every user_prompt, system_injected,
-assistant_response, assistant_thinking, tool_use, tool_result and summary turn with
-`turn_number < source_file.turn_number`. Each turn is truncated to `max_turn_chars`, and the oldest turns are dropped to
-fit `max_total_chars`.
+`scripts/swechat/example.py: build_example(comment_id, max_total_chars=300_000, max_turn_chars=None)` returns
+`(sentence, source_file_content, conversation_text)`. The conversation is the **whole session** before the write
+(`turn_number < source_file.turn_number`), rendered by `conversation.py`, the same view the HTML viewer shows:
+- user prompts, assistant responses and compaction summaries in full (`[user] …`, `[assistant] …`, `[summary] …`);
+- each run of agent work between them collapsed into one stub, with tool results never shown:
+  `[agent: thinking ×2 · 3 tool calls: Read …/cli/lifecycle.go · Grep "SessionStart" in cmd · Bash go test ./…]`.
+
+Text turns carry the session context, because the agent reports what it found and the user replies. The stubs keep
+provenance, such as whether the agent read a repository file or ran a command. Text is about 8% of a session's
+characters: the median session is about 11k characters, and fewer than 1% exceed the default 300k-character cap.
+Over the cap, the oldest items are dropped.

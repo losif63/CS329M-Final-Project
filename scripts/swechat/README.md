@@ -23,7 +23,7 @@ Step by step:
 | Step | Command | Output |
 |---|---|---|
 | 1. Download | `python scripts/swechat/download.py` | `data/swechat/raw/*.parquet` (~11 GB) at the pinned dataset revision `202b071f`, SHA-256-verified, plus tree-sitter grammars cached for offline use |
-| 2. Test | `python -m pytest scripts/swechat/tests` | 69 unit tests on synthetic cases |
+| 2. Test | `python -m pytest scripts/swechat/tests` | 73 unit tests on synthetic cases |
 | 3. Extract | `python scripts/swechat/extract.py [--limit-sessions N] [--seed S] [--out DIR]` | `data/swechat/db/`: `turn`, `source_file`, `comment`, `dropped_sample` parquet files, plus `stats.json` and `README.md` (copied from `SCHEMA.md`). The full run takes about 15 min |
 | 4. Viewer | `python scripts/swechat/viewer/export.py [--db DIR]` | `data/swechat/viewer_site/`: `index.html`, `index.js`, and `s/<k>.js` session shards. Open `index.html` directly from disk |
 | 5. Publish | `python scripts/swechat/viewer/publish.py` | uploads the viewer to the **private** Space `CS329M/Data-Visualization`, and refuses if the Space is public |
@@ -45,7 +45,8 @@ across 31 languages. `stats.json` records the counts at every filter step.
 | `commit_route.py` | commit route: diff parsing, explaining a commit through the agent's changes, rebase/base-move guards, redaction-tolerant comparison |
 | `comments.py` | comment extraction (Python `tokenize`/`ast`, tree-sitter for other languages), non-prose filters, diffing for newly added comments |
 | `sentences.py` | pysbd sentence splitting with protected spans, and line mapping |
-| `example.py` | `build_example(comment_id, ...)` → (sentence, source file, conversation text) for model inputs |
+| `conversation.py` | compact conversation view (full text turns, one-line stubs for thinking/tool calls) shared by the viewer and `build_example` |
+| `example.py` | `build_example(comment_id, ...)` → (sentence, source file, whole-session conversation text) for model inputs |
 | `download.py`, `viewer/export.py`, `viewer/publish.py`, `run_all.sh` | reproducibility tooling |
 | `tests/` | unit tests |
 

@@ -61,7 +61,15 @@
   .turn .hd { font-size: 11px; color: var(--muted); display: flex; gap: 6px; align-items: baseline; }
   .turn .hd b { font-weight: 600; }
   .turn .bd { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; margin-top: 2px; }
-  .turn.clamp .bd { max-height: 9.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+  .t-user .hd b { color: var(--user); } .t-user { border-color: var(--user); }
+  .t-assistant .hd b { color: var(--assistant); } .t-assistant { border-color: var(--assistant); }
+  .t-summary .hd b { color: var(--system); } .t-summary { border-color: var(--system); }
+  .work { margin: 4px 0 4px 13px; font-size: 12px; color: var(--muted); }
+  .work-head { cursor: pointer; font-family: var(--mono); }
+  .work-head:hover { color: var(--text); }
+  .work .work-list { display: none; margin: 2px 0 6px 14px; font-family: var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .work.open .work-list { display: block; }
+  .turn.clamp .bd { max-height: 18em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
   .turn .more { font-size: 11px; color: var(--accent); cursor: pointer; background: none; border: 0; padding: 0; }
   .turn.mono .bd { font-family: var(--mono); font-size: 12px; }
   .t-user_prompt { border-color: var(--user); } .t-user_prompt .hd b { color: var(--user); }
@@ -217,7 +225,7 @@
       for (const x of missing) { const sp = el("span", "sent", x.text); sp.dataset.k = x.k; sp.onclick = () => select(x.k); un.appendChild(sp); }
     }
     renderCode(c, s);
-    renderConvo(c, s, shard.turns);
+    renderConvo(c, s, shard.items);
     select(Math.min(sentIdx, c.sentences.length - 1));
   }
 
@@ -235,22 +243,41 @@
     code.appendChild(frag);
   }
 
-  function renderConvo(c, s, all) {
-    const turns = all.slice(c.turn_end - c.turn_count, c.turn_end);
-    const earlier = c.turns_before_window;
-    $("convo-sub").textContent = `last ${turns.length} of ${earlier + turns.length} turns`;
+  function renderConvo(c, s, items) {
+    const W = s.turn_number;
+    const shown = [];
+    for (const it of items.slice(0, c.item_end)) {
+      if (it.k !== "work") { shown.push(it); continue; }
+      const cl = { ...it, h: it.h.filter((t) => t < W), c: it.c.filter((x) => x[2] < W) };
+      if (cl.h.length || cl.c.length || cl.s) shown.push(cl);
+    }
+    const nText = shown.filter((it) => it.k !== "work").length;
+    const nCalls = shown.reduce((n, it) => n + (it.k === "work" ? it.c.length : 0), 0);
+    $("convo-sub").textContent = `whole session: ${nText} messages, ${nCalls} tool calls (stubbed)`;
     const box = $("convo"); box.replaceChildren();
-    if (earlier > 0) box.appendChild(el("div", "note", `… ${earlier} earlier turns not shown`));
-    if (!turns.length) box.appendChild(el("div", "empty", "No conversation turns before this write."));
-    for (const [tn, tt, tool, text] of turns) {
-      const t = el("div", `turn t-${tt}` + (tt.startsWith("tool") ? " mono" : ""));
+    if (!shown.length) box.appendChild(el("div", "empty", "No conversation before this write."));
+    for (const it of shown) {
+      if (it.k === "work") {
+        const w = el("div", "work");
+        const bits = [];
+        if (it.h.length) bits.push(`thinking${it.h.length > 1 ? " ×" + it.h.length : ""}`);
+        if (it.c.length) bits.push(`${it.c.length} tool call${it.c.length > 1 ? "s" : ""}: ` +
+          it.c.slice(0, 4).map((x) => x[0]).join(", ") + (it.c.length > 4 ? ", …" : ""));
+        if (!bits.length && it.s) bits.push(`system message${it.s > 1 ? " ×" + it.s : ""}`);
+        const head = el("div", "work-head", `▸ agent: ${bits.join(" · ")}`);
+        const list = el("div", "work-list");
+        for (const [name, target, tn] of it.c) list.appendChild(el("div", null, `${name} ${target}`.trim() + `   (turn ${tn})`));
+        if (it.c.length) head.onclick = () => { const open = w.classList.toggle("open"); head.textContent = `${open ? "▾" : "▸"} agent: ${bits.join(" · ")}`; };
+        w.append(head, list);
+        box.appendChild(w);
+        continue;
+      }
+      const t = el("div", `turn t-${it.k}`);
       const hd = el("div", "hd");
-      hd.append(el("b", null, tt === "tool_use" && tool ? `tool_use · ${tool}` : tt), el("span", null, `turn ${tn}`));
-      const bd = el("div", "bd", text || "(empty in the dataset)");
-      if (!text) bd.style.color = "var(--muted)";
-      t.append(hd, bd);
+      hd.append(el("b", null, it.k), el("span", null, `turn ${it.t}`));
+      t.append(hd, el("div", "bd", it.x));
       box.appendChild(t);
-      if (text.length > 600 || text.split("\n").length > 8) {
+      if (it.x.length > 1200 || it.x.split("\n").length > 16) {
         t.classList.add("clamp");
         const more = el("button", "more", "show more");
         more.onclick = () => { const on = t.classList.toggle("clamp"); more.textContent = on ? "show more" : "show less"; };
