@@ -117,17 +117,20 @@ def work_line(it: dict) -> str:
     return "[agent: " + " · ".join(bits) + "]"
 
 
-def render_text(items: list[dict], max_total_chars: int | None = None, max_turn_chars: int | None = None) -> str:
-    """Plain-text conversation for model inputs. Over `max_total_chars`, the oldest items are dropped."""
+def render_text(items: list[dict], max_total_chars: int | None = None, max_turn_chars: int | None = None,
+                show_turns: bool = False) -> str:
+    """Plain-text conversation for model inputs. Over `max_total_chars`, the oldest items are dropped.
+    With `show_turns`, each line starts with its turn number so a labeler can cite evidence."""
     lines = []
     for it in items:
+        prefix = f"(turn {it['t']}) " if show_turns else ""
         if it["k"] == "work":
-            lines.append(work_line(it))
+            lines.append(prefix + work_line(it))
         else:
             text = it["x"]
             if max_turn_chars and len(text) > max_turn_chars:
                 text = text[:max_turn_chars] + f" …[+{len(text) - max_turn_chars} chars]"
-            lines.append(f"[{it['k']}] {text}")
+            lines.append(f"{prefix}[{it['k']}] {text}")
     if max_total_chars is None or sum(len(s) + 1 for s in lines) <= max_total_chars:
         return "\n".join(lines)
     kept, total = [], 0

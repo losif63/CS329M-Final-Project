@@ -32,7 +32,7 @@ def _session_items(db: str, session_id: str) -> tuple[dict, ...]:
 
 def build_example(comment_id: int, max_total_chars: int | None = DEFAULT_MAX_TOTAL_CHARS,
                   max_turn_chars: int | None = None, db: Path = DB,
-                  con: duckdb.DuckDBPyConnection | None = None) -> tuple[str, str, str]:
+                  con: duckdb.DuckDBPyConnection | None = None, show_turns: bool = False) -> tuple[str, str, str]:
     """Return (sentence, source_file_content, conversation_text) for a comment id.
 
     The whole session before the write is included. Text turns can be capped with
@@ -48,4 +48,4 @@ def build_example(comment_id: int, max_total_chars: int | None = DEFAULT_MAX_TOT
         raise KeyError(f"comment id {comment_id} not found")
     sentence, source, session_id, turn_number = row[0]
     items = items_before(list(_session_items(str(db), session_id)), turn_number)
-    return sentence, source, render_text(items, max_total_chars, max_turn_chars)
+    return sentence, source, render_text(items, max_total_chars, max_turn_chars, show_turns)

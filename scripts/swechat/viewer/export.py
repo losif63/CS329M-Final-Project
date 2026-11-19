@@ -29,22 +29,12 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from conversation import build_items  # noqa: E402
+from markers import MARKER_RE  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 DB = ROOT / "data/swechat/db"
 HERE = Path(__file__).resolve().parent
 LABEL_CHARS = 90
-# surface markers of session context (a rough proxy for browsing, not a label)
-MARKER_RE = re.compile("|".join([
-    r"\b(now|no longer|previously|used to|instead of|originally|anymore|changed (to|from)|updated to|switched (to|from)"
-    r"|the old|the new (approach|logic|version|behavior|implementation)|unlike before|this (fix|change)"
-    r"|(was|were) (removed|replaced|changed))\b",
-    r"\b(as requested|per (the )?(user|your|request)|requested by|the user (asked|wants|requested)|you asked"
-    r"|as discussed|as mentioned|we (discussed|agreed|decided)|per our|as (you|we) )\b",
-    r"(/Users/|/home/\w|on (my|this) machine|\blocally\b|in this (environment|session|run)|the (test )?run (above|earlier)"
-    r"|output above|tested (it|this|locally)|verified (it|this|that))",
-    r"\b(fix(es|ed)? (the|a|an) (bug|issue|error|crash|problem)|bug fix|workaround for the|to avoid the (bug|issue|error))\b",
-]), re.I)
 
 
 def sentence_span(full: str, sent: str, start: int) -> tuple[int, int] | None:

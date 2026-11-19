@@ -1,0 +1,33 @@
+# Slop-labeling pilot
+
+Measures how much slop the SWE-chat dataset holds, how good the keyword proxy is, and whether an LLM judge agrees with
+human labels, before labeling at scale.
+
+- `rulebook.md`: the labeling standard. The LLM receives it verbatim as its instructions, and humans should label by it too.
+- `pilot.py`: sampling, prompt building, LLM labeling with the Claude or Codex CLI, a blind hand-labeling sheet, and the report.
+
+```bash
+python scripts/swechat/labeling/pilot.py sample                 # 200 random + 200 keyword-marker sentences (seed 0)
+python scripts/swechat/labeling/pilot.py prompts                # data/swechat/labels/pilot_v1/prompts/<item>.md
+python scripts/swechat/labeling/pilot.py label --backend codex  # or --backend claude [--model sonnet]; resumable
+python scripts/swechat/labeling/pilot.py handsheet              # blind 100-item sheet for two human labelers
+python scripts/swechat/labeling/pilot.py report                 # prevalence, proxy precision, agreement
+```
+
+Each prompt holds the target sentence, its full comment, the code within 60 lines of the target and the whole
+conversation before the write (capped at 120k characters, keeping the most recent context). Each conversation line
+carries its turn number so the judge can cite evidence. The rulebook goes as the system prompt (Claude) or ahead of
+the prompt (Codex). Both CLIs run with no tools, from an empty directory, with a JSON schema enforcing
+`{label, category, evidence_turns, rationale}`.
+
+**Hand labeling.** Open `handsheet.csv`, read each `handsheet_contexts/hNNN.md` (exactly what the LLM saw) or use the
+viewer link, and fill in `label_a`/`category_a` (one person) and `label_b`/`category_b` (the other) without looking
+at each other's labels, the LLM output, or `handsheet_key.json`. Then run `report`.
+
+**Estimates.** The `random` stratum is a uniform sample, so it gives unbiased prevalence. The `marker` stratum (at
+most 2 per session) measures the proxy's precision. Prevalence is estimated by stratifying on the marker:
+P(slop) = P(slop | marker)·P(marker) + P(slop | no marker)·P(no marker). Intervals are 95% Wilson intervals.
+Agreement is Cohen's kappa on slop vs. not_slop, excluding `unsure`.
+
+**Cost (smoke test, 6 items).** Claude Opus: about $0.50 per item at list price, so about $200 for 400 items. Codex
+(ChatGPT plan): no per-call charge, about 8 s per item.
