@@ -4,6 +4,8 @@ Measures how much slop the SWE-chat dataset holds, how good the keyword proxy is
 human labels, before labeling at scale.
 
 - `rulebook.md`: the labeling standard. The LLM receives it verbatim as its instructions, and humans should label by it too.
+- `rulebook_v2.md`: draft v2. It adds the agent's own working process to "session", plus a `deliberation` category
+  for thinking-aloud comments. It isn't used yet: v1 is the reference until enough v1 misses justify a comparison.
 - `pilot.py`: sampling, prompt building, LLM labeling with the Claude or Codex CLI, a blind hand-labeling sheet, and the report.
 
 ```bash
