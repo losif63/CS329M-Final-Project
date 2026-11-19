@@ -5,6 +5,7 @@
     python scripts/swechat/labeling/pilot.py label   [--backend claude|codex] [--model M] [--workers 4] [--limit N]
     python scripts/swechat/labeling/pilot.py handsheet [--n 100]
     python scripts/swechat/labeling/pilot.py report
+    python scripts/swechat/labeling/pilot.py serve [--port 8000]   # local web UI for the hand labels
 
 Outputs go to data/swechat/labels/<run>/ (gitignored):
     sample.parquet       items: item_id, comment_id, stratum (random | marker), marker, language, ...
@@ -479,6 +480,14 @@ def cmd_report(args) -> None:
     print("\n".join(md))
 
 
+def cmd_serve(args) -> None:
+    from labelui import serve
+    d = run_dir(args.run)
+    if not (d / "handsheet.csv").exists():
+        sys.exit("no handsheet.csv yet; run `pilot.py handsheet` first")
+    serve(d, DB, args.port)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     common = argparse.ArgumentParser(add_help=False)
@@ -507,6 +516,9 @@ def main() -> None:
     s.set_defaults(func=cmd_handsheet)
     s = sub.add_parser("report", parents=[common])
     s.set_defaults(func=cmd_report)
+    s = sub.add_parser("serve", parents=[common], help="local web UI for hand labels (writes handsheet.csv)")
+    s.add_argument("--port", type=int, default=8000)
+    s.set_defaults(func=cmd_serve)
     args = ap.parse_args()
     args.func(args)
 

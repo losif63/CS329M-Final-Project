@@ -20,10 +20,13 @@ carries its turn number so the judge can cite evidence. The rulebook goes as the
 the prompt (Codex). Both CLIs run with no tools, from an empty directory, with a JSON schema enforcing
 `{label, category, evidence_turns, rationale}`.
 
-**Hand labeling.** Open `handsheet.csv` and, for each row, read `handsheet_contexts/hNNN.md` (exactly what the LLM
-saw) or use the viewer link. Fill in `label` (`slop`, `not_slop` or `unsure`). `category` is optional: fill it in for
-slop if you want the report to compare categories too. Don't look at the LLM output or `handsheet_key.json` while
-labeling. Then run `report`.
+**Hand labeling.** Run `python scripts/swechat/labeling/pilot.py serve` and open http://localhost:8000. For each
+item it shows the target sentence inside its full comment, the full source file with the sentence highlighted, the
+other files the agent wrote earlier in the session (latest version before this write), and the whole conversation
+before the write. Click an agent line to list its tool calls, and click a call to see its input and output (file reads,
+greps, command output). Keys: `s` slop, `n` not slop, `u` unsure, `1`–`6` category (optional), `←`/`→` move. The
+"Unsure only" filter revisits open cases. Every change is written to `handsheet.csv` straight away, which you can also
+edit by hand. The UI never shows the LLM labels, the sampling stratum or `handsheet_key.json`. Then run `report`.
 
 **Estimates.** The `random` stratum is a uniform sample, so it gives unbiased prevalence. The `marker` stratum (at
 most 2 per session) measures the proxy's precision. Prevalence is estimated by stratifying on the marker:
