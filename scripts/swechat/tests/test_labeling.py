@@ -37,11 +37,14 @@ def test_valid_output_and_schema():
     assert set(pilot.SCHEMA["required"]) == set(pilot.SCHEMA["properties"])  # strict-schema backends need this
 
 
-def test_load_hand_maps_opaque_ids(tmp_path):
-    (tmp_path / "handsheet_key.json").write_text(json.dumps({"h001": "m0007", "h002": "r0003"}))
+def test_load_hand_single_labeler_category_optional(tmp_path):
+    (tmp_path / "handsheet_key.json").write_text(json.dumps({"h001": "m0007", "h002": "r0003", "h003": "r0009"}))
     with (tmp_path / "handsheet.csv").open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["hand_id", "label_a", "label_b"])
-        w.writerow(["h001", "Slop", "not slop"])
-        w.writerow(["h002", "not_slop", ""])
-    assert pilot.load_hand(tmp_path) == {"a": {"m0007": "slop", "r0003": "not_slop"}, "b": {"m0007": "not_slop"}}
+        w.writerow(["hand_id", "label", "category"])
+        w.writerow(["h001", "Slop", "session history"])
+        w.writerow(["h002", "not slop", ""])
+        w.writerow(["h003", "", ""])  # not labeled yet
+    assert pilot.load_hand(tmp_path) == {"you": {
+        "m0007": {"label": "slop", "category": "session_history"},
+        "r0003": {"label": "not_slop", "category": ""}}}

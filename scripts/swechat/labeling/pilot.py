@@ -314,17 +314,17 @@ def cmd_handsheet(args) -> None:
     key = {}
     with p.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["hand_id", "sentence", "file", "context_file", "viewer_link",
-                    "label_a", "category_a", "label_b", "category_b", "notes"])
+        w.writerow(["hand_id", "sentence", "file", "context_file", "viewer_link", "label", "category", "notes"])
         for n, it in enumerate(pick, 1):
             hid = f"h{n:03d}"
             key[hid] = it["item_id"]
             (ctx / f"{hid}.md").write_text((d / "prompts" / f"{it['item_id']}.md").read_text())
             vid, k = vids[int(it["comment_id"])]
             w.writerow([hid, it["sentence"], it["file_path"].replace("\\", "/").rsplit("/", 1)[-1],
-                        f"handsheet_contexts/{hid}.md", f"{SPACE} (#c={vid}&s={k})", "", "", "", "", ""])
+                        f"handsheet_contexts/{hid}.md", f"{SPACE} (#c={vid}&s={k})", "", "", ""])
     (d / "handsheet_key.json").write_text(json.dumps(key, indent=1) + "\n")
-    print(f"{len(pick)} items -> {p}\nlabels: slop / not_slop / unsure; categories: {', '.join(CATEGORIES)}\n"
+    print(f"{len(pick)} items -> {p}\nlabel (required): slop / not_slop / unsure\n"
+          f"category (optional, for slop): {', '.join(c for c in CATEGORIES if c != 'none')}\n"
           f"(handsheet_key.json maps hand ids to items; don't open it before labeling)")
 
 
@@ -362,18 +362,25 @@ def load_llm(d: Path) -> dict[str, dict[str, dict]]:
     return out
 
 
-def load_hand(d: Path) -> dict[str, dict[str, str]]:
+def _norm(v: str | None) -> str:
+    return (v or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def load_hand(d: Path) -> dict[str, dict[str, dict[str, str]]]:
+    """rater -> item_id -> {"label", "category"}. One labeler uses `label`/`category`; the older two-labeler
+    sheet's `label_a`/`label_b` columns are still read."""
     p = d / "handsheet.csv"
     if not p.exists():
         return {}
     key = json.loads((d / "handsheet_key.json").read_text())
-    out = defaultdict(dict)
+    out: dict = defaultdict(dict)
     with p.open() as f:
         for r in csv.DictReader(f):
-            for who in ("a", "b"):
-                lab = (r.get(f"label_{who}") or "").strip().lower().replace("-", "_").replace(" ", "_")
+            for who, suffix in (("you", ""), ("a", "_a"), ("b", "_b")):
+                lab = _norm(r.get(f"label{suffix}"))
                 if lab in ("slop", "not_slop", "unsure"):
-                    out[who][key[r["hand_id"]]] = lab
+                    cat = _norm(r.get(f"category{suffix}"))
+                    out[who][key[r["hand_id"]]] = {"label": lab, "category": cat if cat in CATEGORIES else ""}
     return dict(out)
 
 
@@ -435,7 +442,7 @@ def cmd_report(args) -> None:
         md.append("")
     # agreement
     raters = {f"llm:{k}": {i: v["label"] for i, v in recs.items()} for k, recs in llm.items()}
-    raters.update({f"human:{k}": v for k, v in hand.items()})
+    raters.update({f"human:{k}": {i: v["label"] for i, v in recs.items()} for k, recs in hand.items()})
     names = sorted(raters)
     if len(names) > 1:
         md += ["## Agreement (Cohen's kappa on slop / not_slop; items marked unsure by either rater excluded)", ""]
@@ -451,6 +458,14 @@ def cmd_report(args) -> None:
                 if common:
                     md.append(f"- {a} vs {b_}: n={len(common)}, agreement {100 * acc:.0f}%, kappa "
                               + (f"{k:.2f}" if k is not None else "n/a"))
+        for h, hrecs in hand.items():
+            for backend, recs in llm.items():
+                both = [i for i, v in hrecs.items() if v["label"] == "slop" and v["category"] and i in recs
+                        and recs[i]["label"] == "slop"]
+                if both:
+                    same = sum(hrecs[i]["category"] == recs[i]["category"] for i in both)
+                    md.append(f"- category match, human:{h} vs llm:{backend} (both slop, category given): "
+                              f"{same}/{len(both)}")
         disagree = []
         for x in sorted(items):
             labs = {n: raters[n][x] for n in names if x in raters[n]}
