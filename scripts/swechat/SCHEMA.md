@@ -113,7 +113,7 @@ One row per newly added, agent-written comment sentence.
 | full_comment | str | the whole comment with comment markers removed (merged line comments, `/* */` body, doc comment, or dedented Python docstring) |
 | comment_kind | str | inline / block / docstring |
 | line_start, line_end | int | 1-based lines of the sentence in `source_file.content` |
-| label | str | null for now |
+| label | str | `slop`, `not_slop` or `unsure` after `labeling/finalize.py` (null straight out of `extract.py`) |
 
 **Extraction.**
 - Python uses `tokenize` plus `ast` docstrings.
@@ -148,6 +148,12 @@ One row per newly added, agent-written comment sentence.
 - Protected from splitting: code spans, URLs, paths, versions, dotted names, `a::b::c()` and JSDoc `{@link …}`.
 - New paragraphs start at blank lines, bullets, `name: desc` and `@tag` lines, and between consecutive lines that read as separate unpunctuated statements. Short `Header:` lines are skipped.
 - Within a session, only the first `(file_path, normalised sentence)` is kept.
+
+### label_<tag>.parquet
+Written by `labeling/finalize.py`. One row per sentence: `comment_id`, `label`, `category`, `rationale`,
+`evidence_turns`, `source` (`judge`, or `screen_negative` = not flagged by the screen, so counted as not slop), `model`,
+`rulebook`, `pilot_item`/`pilot_stratum` (the 400 pilot sentences, to hold out of training), and
+`hand_label`/`hand_category` (the 100 hand-labeled sentences). See `scripts/swechat/labeling/README.md`.
 
 ## Model inputs
 `scripts/swechat/example.py: build_example(comment_id, max_total_chars=300_000, max_turn_chars=None)` returns
