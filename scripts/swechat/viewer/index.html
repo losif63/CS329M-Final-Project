@@ -198,10 +198,10 @@
     if (cur != null && shown.includes(cur)) pick.value = cur;
     $("count").textContent = `${visible.length.toLocaleString()} / ${IDX.length.toLocaleString()} comments` +
       (visible.length > MAX_OPTIONS ? ` (menu shows ${MAX_OPTIONS}; filter or use ◀ ▶ Random)` : "") +
-      ` · ${X.n_sentences.toLocaleString()} sentences total`;
+      ` · ${X.n_sentences.toLocaleString()} sentences total` + (X.n_slop != null ? ` · ${X.n_slop.toLocaleString()} slop` : "");
   }
 
-  async function show(i, sentIdx = 0) {
+  async function show(i, sentIdx = null) {
     cur = i;
     const r = IDX[i], my = ++token;
     if (![...$("pick").options].some((o) => Number(o.value) === i)) fillPicker();  // adds the current comment to the menu
@@ -240,6 +240,10 @@
     }
     renderCode(c, s);
     renderConvo(c, s, shard.items);
+    if (sentIdx == null) {  // open on the first slop sentence, if any
+      const k = c.sentences.findIndex((x) => x.lab === "slop");
+      sentIdx = k >= 0 ? k : 0;
+    }
     select(Math.min(sentIdx, c.sentences.length - 1));
   }
 
@@ -359,7 +363,8 @@
   fillPicker();
   const m = location.hash.match(/c=(\d+)/), ms = location.hash.match(/s=(\d+)/);
   const start = m && byId.has(Number(m[1])) ? byId.get(Number(m[1])) : 0;
-  if (IDX.length) show(start, ms ? Number(ms[1]) : 0); else $("comment").textContent = "No comments in index.js.";
+  if (X.only_slop) document.querySelector("header h1").textContent = "Slop Comments";
+  if (IDX.length) show(start, ms ? Number(ms[1]) : null); else $("comment").textContent = "No comments in index.js.";
 })();
 </script>
 </body>

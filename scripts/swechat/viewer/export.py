@@ -57,6 +57,9 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=ROOT / "data/swechat/viewer_site")  # gitignored
     ap.add_argument("--max-text-chars", type=int, default=20000,
                     help="cap for a single text turn in the viewer (pasted logs can be huge)")
+    ap.add_argument("--only-slop", action="store_true",
+                    help="keep only comments with at least one slop sentence (and the sessions they need)")
+    ap.add_argument("--title", default=None, help="Space title for README.md (default: the one in space_README.md)")
     ap.add_argument("--labels", type=Path, default=None,
                     help="label table from labeling/finalize.py (default: the newest db/label_*.parquet, if any)")
     args = ap.parse_args()
@@ -88,6 +91,10 @@ def main() -> None:
             c["_cursor"] = span[1]
         c["sentences"].append({"id": cid, "text": sent, "line_start": l0, "line_end": l1,
                                "span": list(span) if span else None, **labels.get(cid, {})})
+    if args.only_slop:
+        if not labels:
+            raise SystemExit("--only-slop needs a label table (labeling/finalize.py)")
+        comments = {k: c for k, c in comments.items() if any(x.get("lab") == "slop" for x in c["sentences"])}
     by_session: dict[str, list[dict]] = defaultdict(list)
     for c in comments.values():
         c.pop("_cursor")
@@ -164,9 +171,18 @@ def main() -> None:
     stats = json.loads((db / "stats.json").read_text())
     (args.out / "index.js").write_text("window.SWECHAT_INDEX = " + js_payload({
         "sessions": session_ids, "comments": index,
-        "n_sentences": sum(len(c["sentences"]) for c in ordered), "stats": stats}) + ";\n")
+        "n_sentences": sum(len(c["sentences"]) for c in ordered),
+        "n_slop": sum(x.get("lab") == "slop" for c in ordered for x in c["sentences"]),
+        "only_slop": bool(args.only_slop), "stats": stats}) + ";\n")
     shutil.copy(HERE / "index.html", args.out / "index.html")
-    shutil.copy(HERE / "space_README.md", args.out / "README.md")
+    readme = (HERE / "space_README.md").read_text()
+    if args.title:
+        readme = re.sub(r"^title: .*$", f"title: {args.title}", readme, count=1, flags=re.M)
+    if args.only_slop:
+        readme = readme.replace("# Slop Comment Viewer", "# Slop Comment Viewer (slop only)", 1) + (
+            "\nThis Space shows only comments with at least one sentence labeled slop (rulebook "
+            f"{label_path.stem.split('_', 1)[-1]}); each opens on its first slop sentence with the judge's rationale.\n")
+    (args.out / "README.md").write_text(readme)
     size = sum(p.stat().st_size for p in args.out.rglob("*") if p.is_file()) / 1e6
     print(f"{len(ordered)} comments, {sum(len(c['sentences']) for c in ordered)} sentences ({n_unplaced} not located), "
           f"{len(sources)} sources, {len(session_ids)} session shards, index.js "
