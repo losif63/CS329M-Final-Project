@@ -57,8 +57,17 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=ROOT / "data/swechat/viewer_site")  # gitignored
     ap.add_argument("--max-text-chars", type=int, default=20000,
                     help="cap for a single text turn in the viewer (pasted logs can be huge)")
+    ap.add_argument("--labels", type=Path, default=None,
+                    help="label table from labeling/finalize.py (default: the newest db/label_*.parquet, if any)")
     args = ap.parse_args()
     db, con = args.db, duckdb.connect()
+    label_path = args.labels or max(db.glob("label_v*.parquet"), default=None, key=lambda p: p.stat().st_mtime)
+    labels: dict[int, dict] = {}
+    if label_path:
+        for cid, lab, cat, why, src in con.execute(f"""
+                SELECT comment_id, label, category, rationale, source FROM '{label_path}'""").fetchall():
+            labels[cid] = {"lab": lab, "cat": cat, "why": why, "src": src}
+        print(f"labels: {label_path.name} ({sum(v['lab'] == 'slop' for v in labels.values())} slop)")
 
     # ---- comments (grouped from sentences) and their sources
     sources = {}
@@ -78,7 +87,7 @@ def main() -> None:
         if span:
             c["_cursor"] = span[1]
         c["sentences"].append({"id": cid, "text": sent, "line_start": l0, "line_end": l1,
-                               "span": list(span) if span else None})
+                               "span": list(span) if span else None, **labels.get(cid, {})})
     by_session: dict[str, list[dict]] = defaultdict(list)
     for c in comments.values():
         c.pop("_cursor")
@@ -150,7 +159,8 @@ def main() -> None:
         text = re.sub(r"\s+", " ", c["full_comment"])[:LABEL_CHARS]
         label = f"{s['file_path'].rsplit('/', 1)[-1]}:{first['line_start']} · {text}"
         marker = int(any(MARKER_RE.search(x["text"]) for x in c["sentences"]))
-        index.append([c["id"], sidx[s["session_id"]], s["language"] or "?", c["kind"], label, marker])
+        slop_cats = sorted({x.get("cat") or "?" for x in c["sentences"] if x.get("lab") == "slop"})
+        index.append([c["id"], sidx[s["session_id"]], s["language"] or "?", c["kind"], label, marker, ",".join(slop_cats)])
     stats = json.loads((db / "stats.json").read_text())
     (args.out / "index.js").write_text("window.SWECHAT_INDEX = " + js_payload({
         "sessions": session_ids, "comments": index,

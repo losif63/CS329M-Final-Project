@@ -46,6 +46,11 @@
   .panel h2 .sub { text-transform: none; letter-spacing: 0; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
   .chip { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); color: var(--muted); }
+  .sent.slop { text-decoration: underline wavy var(--sel); text-underline-offset: 3px; }
+  #labelinfo { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 12px 10px; }
+  #labelinfo .why { flex-basis: 100%; font-size: 12.5px; color: var(--text); }
+  .chip.lab-slop { color: var(--sel); border-color: var(--sel); font-weight: 600; }
+  .chip.lab-not_slop { color: var(--assistant); border-color: var(--assistant); }
   #comment { margin: 10px 12px 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px;
              font-family: var(--mono); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere;
              max-height: 30vh; overflow: auto; color: var(--text); }
@@ -105,8 +110,13 @@
   <button id="next" title="Next (→)">▶</button>
   <button id="rand" title="Random (r)">Random</button>
   <select id="lang" aria-label="Language"><option value="">All languages</option></select>
-  <label title="Sentences containing surface markers of session context (now, previously, instead of, as requested, locally, …)" style="white-space:nowrap">
-    <input type="checkbox" id="marker"> slop-marker hits</label>
+  <select id="labelf" aria-label="Label filter" title="Filter by label (keyword hits = the regex proxy, not a label)">
+    <option value="">All labels</option><option value="slop">Slop (any sentence)</option>
+    <option value="cat:session_history">· session history</option><option value="cat:plan_reference">· plan reference</option>
+    <option value="cat:unverifiable_result">· unverifiable result</option><option value="cat:conversation">· conversation</option>
+    <option value="cat:local_environment">· local environment</option><option value="cat:other_session">· other session</option>
+    <option value="marker">Keyword hits</option>
+  </select>
   <span id="count"></span>
 </header>
 <main>
@@ -115,6 +125,7 @@
       <h2>Comment <span class="sub" id="comment-sub"></span></h2>
       <div class="meta" id="meta"></div>
       <div id="comment"></div>
+      <div id="labelinfo"></div>
       <div id="unplaced"></div>
     </section>
     <section class="panel" id="convo-panel">
@@ -168,13 +179,15 @@
   let visible = [], cur = null, curData = null, selSent = 0, token = 0;
 
   function fillPicker() {
-    const q = $("q").value.trim().toLowerCase(), lang = $("lang").value, onlyMarker = $("marker").checked;
+    const q = $("q").value.trim().toLowerCase(), lang = $("lang").value, lf = $("labelf").value;
     const words = q ? q.split(/\s+/) : [];
     visible = [];
     for (let i = 0; i < IDX.length; i++) {
       const r = IDX[i];
       if (lang && r[2] !== lang) continue;
-      if (onlyMarker && !r[5]) continue;
+      if (lf === "marker" && !r[5]) continue;
+      if (lf === "slop" && !r[6]) continue;
+      if (lf.startsWith("cat:") && !(r[6] || "").split(",").includes(lf.slice(4))) continue;
       if (words.length && !words.every((w) => hay[i].includes(w))) continue;
       visible.push(i);
     }
@@ -213,7 +226,8 @@
       if (x.span[0] < pos) continue;
       if (x.span[0] > pos) box.appendChild(document.createTextNode(c.full_comment.slice(pos, x.span[0])));
       const sp = el("span", "sent", c.full_comment.slice(x.span[0], x.span[1]));
-      sp.dataset.k = x.k; sp.title = `sentence id ${x.id} · lines ${x.line_start}–${x.line_end}`;
+      sp.dataset.k = x.k; sp.title = `sentence id ${x.id} · lines ${x.line_start}–${x.line_end}` + (x.lab ? ` · ${x.lab}` : "");
+      if (x.lab === "slop") sp.classList.add("slop");
       sp.onclick = () => select(x.k);
       box.appendChild(sp); pos = x.span[1];
     }
@@ -290,9 +304,20 @@
     box.scrollTop = box.scrollHeight;
   }
 
+  function showLabel(x) {
+    const box = $("labelinfo"); box.replaceChildren();
+    if (!x.lab) { box.appendChild(el("span", "chip", "no label")); return; }
+    const chip = el("span", "chip lab-" + x.lab, x.lab === "not_slop" ? "not slop" : x.lab);
+    box.appendChild(chip);
+    if (x.cat) box.appendChild(el("span", "chip", x.cat.replace("_", " ")));
+    box.appendChild(el("span", "chip", x.src === "screen_negative" ? "not flagged by the screen" : "judged with session"));
+    if (x.why) box.appendChild(el("div", "why", x.why));
+  }
+
   function select(k) {
     if (!curData) return;
     const x = curData.c.sentences[k];
+    showLabel(x);
     selSent = k;
     history.replaceState(null, "", `#c=${IDX[cur][0]}&s=${k}`);
     document.querySelectorAll(".sent").forEach((e) => e.classList.toggle("on", Number(e.dataset.k) === k));
@@ -314,7 +339,7 @@
   const refilter = () => { fillPicker(); if (visible.length && !visible.includes(cur)) show(visible[0]); };
   $("q").addEventListener("input", refilter);
   $("lang").addEventListener("change", refilter);
-  $("marker").addEventListener("change", refilter);
+  $("labelf").addEventListener("change", refilter);
   $("pick").addEventListener("change", (e) => show(Number(e.target.value)));
   $("prev").onclick = () => step(-1);
   $("next").onclick = () => step(1);

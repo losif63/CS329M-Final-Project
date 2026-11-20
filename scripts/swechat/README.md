@@ -49,7 +49,7 @@ across 31 languages. `stats.json` records the counts at every filter step.
 | `markers.py` | keyword proxy for session-context wording, shared by the viewer and the labeling pilot |
 | `labeling/` | slop-labeling pilot: rulebook, sampling, LLM labeling via Claude/Codex CLI, hand-label sheet, report (see `labeling/README.md`) |
 | `example.py` | `build_example(comment_id, ...)` → (sentence, source file, whole-session conversation text) for model inputs |
-| `download.py`, `viewer/export.py`, `viewer/publish.py`, `run_all.sh` | reproducibility tooling |
+| `download.py`, `viewer/export.py`, `viewer/publish.py`, `publish_dataset.py`, `run_all.sh` | reproducibility and publishing (`publish_dataset.py` uploads the labeled tables to the private dataset `CS329M/SWEChat-AISlopComments`) |
 | `tests/` | unit tests |
 
 The viewer's "slop-marker hits" filter is a regex proxy (wording like "now", "previously", "instead of", "as requested", "locally"),
