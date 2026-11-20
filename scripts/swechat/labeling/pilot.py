@@ -66,6 +66,15 @@ def rulebook_version(path: Path = RULEBOOK) -> str:
     return m.group(1) if m else "unknown"
 
 
+# a usage or rate limit: stop the whole run (resume later) instead of failing every remaining item
+LIMIT_RE = re.compile(r"hit your (weekly |daily |usage )?limit|usage limit|rate.?limit|api_error_status\"?:\s*429|"
+                      r"\b429\b|Too Many Requests|quota", re.I)
+
+
+class UsageLimit(Exception):
+    pass
+
+
 SOURCE_WINDOW = 60          # lines of code shown above and below the target
 MAX_CONVERSATION = 120_000  # characters (~30k tokens); longer sessions keep the most recent context
 
@@ -286,14 +295,19 @@ def cmd_label(args) -> None:
     print(f"{len(done)} already labeled, {len(todo)} to label with {args.backend} ({args.workers} workers)", flush=True)
     call = call_claude if args.backend == "claude" else call_codex
     lock = threading.Lock()
+    stop = threading.Event()
     workdir = tempfile.mkdtemp(prefix="slop_label_")  # empty dir: no project instructions get loaded
     stats = Counter()
     t0 = time.time()
 
     def work(item_id: str) -> None:
+        if stop.is_set():
+            return
         prompt = (prompts / f"{item_id}.md").read_text()
         err = None
         for attempt in range(1 + args.retries):
+            if stop.is_set():
+                return
             try:
                 t = time.time()
                 r = call(prompt, args.model, args.effort, workdir)
@@ -308,6 +322,12 @@ def cmd_label(args) -> None:
                     stats["cost"] += r["cost_usd"] or 0
                 return
             except Exception as e:  # noqa: BLE001 — record and retry; one bad item must not stop the run
+                if LIMIT_RE.search(str(e)):
+                    if not stop.is_set():
+                        stop.set()
+                        print(f"  usage limit reached at {item_id}; stopping. Rerun the same command to resume.\n"
+                              f"  ({str(e)[-200:]})", flush=True)
+                    return
                 err = e
                 time.sleep(2 * (attempt + 1))
         with lock:
@@ -322,6 +342,8 @@ def cmd_label(args) -> None:
                     print(f"  {n}/{len(futs)}  slop={stats['slop']} not_slop={stats['not_slop']} "
                           f"unsure={stats['unsure']} failed={stats['failed']}  "
                           f"${stats['cost']:.2f}  {time.time() - t0:.0f}s", flush=True)
+    if stop.is_set():
+        sys.exit("stopped on a usage limit; labeled items are saved and the rest resume on the next run")
 
 
 # ---------------------------------------------------------------- hand-label sheet

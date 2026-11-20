@@ -48,3 +48,10 @@ def test_load_hand_single_labeler_category_optional(tmp_path):
     assert pilot.load_hand(tmp_path) == {"you": {
         "m0007": {"label": "slop", "category": "session_history"},
         "r0003": {"label": "not_slop", "category": ""}}}
+
+
+def test_limit_detection():
+    weekly = ('claude exited 1: ..."api_error_status":429,"result":"You\'ve hit your weekly limit · resets Nov 21 at 7pm"')
+    assert pilot.LIMIT_RE.search(weekly)
+    assert pilot.LIMIT_RE.search("codex exited 1: stream error: 429 Too Many Requests")
+    assert not pilot.LIMIT_RE.search("claude returned no structured output: invalid JSON")

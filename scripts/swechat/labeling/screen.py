@@ -93,11 +93,16 @@ def run_batches(entries: list[dict], out: Path, args) -> set[int]:
     call = pilot.call_claude if args.backend == "claude" else pilot.call_codex
     workdir = tempfile.mkdtemp(prefix="slop_screen_")
     lock, stats, t0 = threading.Lock(), Counter(), time.time()
+    stop = threading.Event()
 
     def work(b: int) -> None:
+        if stop.is_set():
+            return
         prompt, ids = batch_prompt(batches[b])
         err: Exception | None = None
         for attempt in range(3):
+            if stop.is_set():
+                return
             try:
                 r = call(prompt, args.model, args.effort, workdir, instructions=INSTRUCTIONS, schema=SCHEMA)
                 keys = sorted({ids[i] for i in r["output"].get("flagged", []) if i in ids})
@@ -112,6 +117,11 @@ def run_batches(entries: list[dict], out: Path, args) -> set[int]:
                     stats["cost"] += r["cost_usd"] or 0
                 return
             except Exception as e:  # noqa: BLE001 — retry, then report; one bad batch must not stop the run
+                if pilot.LIMIT_RE.search(str(e)):
+                    if not stop.is_set():
+                        stop.set()
+                        print(f"  usage limit reached; stopping. Rerun the same command to resume.", flush=True)
+                    return
                 err = e
                 time.sleep(2 * (attempt + 1))
         with lock:
@@ -127,6 +137,8 @@ def run_batches(entries: list[dict], out: Path, args) -> set[int]:
                     print(f"  {n}/{len(futs)} batches, flagged {stats['flagged']}/{stats['sentences']} "
                           f"({100 * rate:.1f}%), failed {stats['failed']}, ${stats['cost']:.2f}, "
                           f"{time.time() - t0:.0f}s", flush=True)
+    if stop.is_set():
+        sys.exit("stopped on a usage limit; finished batches are saved and the rest resume on the next run")
     return flagged
 
 
