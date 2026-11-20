@@ -25,6 +25,7 @@ import csv
 import json
 import math
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -60,6 +61,11 @@ SCHEMA = {
     "required": ["label", "category", "evidence_turns", "rationale"],
     "additionalProperties": False,
 }
+def rulebook_version(path: Path = RULEBOOK) -> str:
+    m = re.match(r"# .*\((v[\d.]+)", path.read_text())
+    return m.group(1) if m else "unknown"
+
+
 SOURCE_WINDOW = 60          # lines of code shown above and below the target
 MAX_CONVERSATION = 120_000  # characters (~30k tokens); longer sessions keep the most recent context
 
@@ -111,6 +117,38 @@ def cmd_sample(args) -> None:
     print(f"sampled {len(rand)} random + {len(mark)} marker items -> {d / 'sample.parquet'}")
     print(f"population: {meta['population_sentences']} sentences, {meta['population_marker']} marker hits "
           f"({100 * meta['population_marker'] / meta['population_sentences']:.2f}%)")
+
+
+def cmd_from_screen(args) -> None:
+    """Make a judging run from a screen run: every flagged sentence becomes an item (stratum `screened`)."""
+    src = LABELS / args.screen
+    flagged, seen = set(), set()
+    for p in sorted(src.glob("screen_*.jsonl")):
+        for line in p.read_text().splitlines():
+            r = json.loads(line)
+            flagged.update(r["flagged"])
+            seen.update(r["keys"])
+    if not seen:
+        sys.exit(f"no screen results in {src}")
+    d = run_dir(args.run)
+    if (d / "sample.parquet").exists() and not args.force:
+        sys.exit(f"{d / 'sample.parquet'} exists; pass --force to overwrite")
+    con = duckdb.connect()
+    con.execute("CREATE TEMP TABLE f AS SELECT unnest(?::BIGINT[]) AS comment_id", [sorted(flagged)])
+    rows = con.execute(f"""
+        SELECT c.id AS comment_id, c.sentence, c.comment_kind, s.session_id, s.repo_id, s.language,
+               s.tool_name, s.certified_by, s.file_path
+        FROM f JOIN '{DB / "comment.parquet"}' c ON c.id = f.comment_id
+        JOIN '{DB / "source_file.parquet"}' s ON s.id = c.source_id ORDER BY c.id""").df().to_dict("records")
+    for n, r in enumerate(rows):
+        r["marker"] = bool(MARKER_RE.search(r["sentence"]))
+        r["stratum"] = "screened"
+        r["item_id"] = f"s{n:06d}"
+    con.register("items", pd.DataFrame(rows))
+    con.execute(f"COPY (SELECT * FROM items ORDER BY item_id) TO '{d / 'sample.parquet'}' (FORMAT parquet)")
+    meta = {"screen": args.screen, "screened_sentences": len(seen), "flagged": len(rows)}
+    (d / "sample_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"{len(rows):,} flagged of {len(seen):,} screened sentences -> {d / 'sample.parquet'}")
 
 
 # ---------------------------------------------------------------- prompts
@@ -223,7 +261,7 @@ def cmd_label(args) -> None:
     d = run_dir(args.run)
     items = {it["item_id"]: it for it in load_sample(d)}
     prompts = d / "prompts"
-    out = d / f"llm_{args.backend}.jsonl"
+    out = d / f"llm_{args.backend}{'_' + args.tag if args.tag else ''}.jsonl"
     done = set()
     if out.exists():
         for line in out.read_text().splitlines():
@@ -255,7 +293,7 @@ def cmd_label(args) -> None:
                 if not valid(r["output"]):
                     raise RuntimeError(f"invalid output: {r['output']}")
                 rec = {"item_id": item_id, "comment_id": int(items[item_id]["comment_id"]), "backend": args.backend,
-                       **r, "seconds": round(time.time() - t, 1), "rulebook": "v1"}
+                       **r, "seconds": round(time.time() - t, 1), "rulebook": rulebook_version()}
                 with lock:
                     with out.open("a") as f:
                         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -397,13 +435,13 @@ def cmd_report(args) -> None:
     d = run_dir(args.run)
     items = {it["item_id"]: it for it in load_sample(d)}
     meta = json.loads((d / "sample_meta.json").read_text())
-    llm, hand = load_llm(d), load_hand(d)
-    N, M = meta["population_sentences"], meta["population_marker"]
+    llm, hand = load_llm(d), load_hand(d) if (d / "handsheet_key.json").exists() else {}
+    N, M = meta.get("population_sentences", 0), meta.get("population_marker", 0)
     md, js = [f"# Labeling pilot `{args.run}`", ""], {"meta": meta, "backends": {}}
     for backend, recs in llm.items():
         md += [f"## {backend}: {len(recs)} of {len(items)} items labeled", ""]
         b: dict = {"labeled": len(recs)}
-        for stratum in ("random", "marker"):
+        for stratum in sorted({it["stratum"] for it in items.values()}):
             ids = [i for i in recs if items[i]["stratum"] == stratum]
             labs = Counter(recs[i]["label"] for i in ids)
             decided = labs["slop"] + labs["not_slop"]
@@ -418,7 +456,7 @@ def cmd_report(args) -> None:
         n_nm = sum(recs[i]["label"] in ("slop", "not_slop") for i in rnd_nm)
         k_m = sum(recs[i]["label"] == "slop" for i in all_m)
         n_m = sum(recs[i]["label"] in ("slop", "not_slop") for i in all_m)
-        if n_nm and n_m:
+        if n_nm and n_m and N:
             p_nm, p_m = wilson(k_nm, n_nm), wilson(k_m, n_m)
             w = M / N
             est = tuple(w * p_m[j] + (1 - w) * p_nm[j] for j in range(3))
@@ -502,6 +540,10 @@ def main() -> None:
     s.add_argument("--marker", type=int, default=200)
     s.add_argument("--seed", type=int, default=0)
     s.set_defaults(func=cmd_sample)
+    s = sub.add_parser("from-screen", parents=[common], help="judging run from a screen run's flagged sentences")
+    s.add_argument("--screen", default="screen_all")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(func=cmd_from_screen)
     s = sub.add_parser("prompts", parents=[common])
     s.set_defaults(func=cmd_prompts)
     s = sub.add_parser("label", parents=[common])
@@ -512,6 +554,7 @@ def main() -> None:
     s.add_argument("--limit", type=int, default=None)
     s.add_argument("--only", default=None, help="comma-separated item ids")
     s.add_argument("--retries", type=int, default=2)
+    s.add_argument("--tag", default=None, help="suffix for the output file, e.g. v1.1 -> llm_claude_v1.1.jsonl")
     s.set_defaults(func=cmd_label)
     s = sub.add_parser("handsheet", parents=[common])
     s.add_argument("--n", type=int, default=100)
