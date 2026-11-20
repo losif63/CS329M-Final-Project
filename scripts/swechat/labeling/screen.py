@@ -104,7 +104,8 @@ def run_batches(entries: list[dict], out: Path, args) -> set[int]:
                 with lock:
                     with out.open("a") as f:
                         f.write(json.dumps({"batch": b, "n": len(ids), "flagged": keys, "keys": sorted(ids.values()),
-                                            "cost_usd": r["cost_usd"], "backend": args.backend}) + "\n")
+                                            "cost_usd": r["cost_usd"], "backend": args.backend,
+                                            "model": r["model"]}) + "\n")
                     flagged.update(keys)
                     stats["sentences"] += len(ids)
                     stats["flagged"] += len(keys)

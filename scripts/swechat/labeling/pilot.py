@@ -227,6 +227,13 @@ def call_claude(prompt: str, model: str | None, effort: str | None, workdir: str
             "model": ",".join(d.get("modelUsage", {})) or model}
 
 
+def codex_default_model() -> str:
+    """The model Codex uses when none is given: `model = ...` in ~/.codex/config.toml."""
+    cfg = Path.home() / ".codex" / "config.toml"
+    m = re.search(r'^\s*model\s*=\s*"([^"]+)"', cfg.read_text(), re.M) if cfg.exists() else None
+    return m.group(1) if m else "codex-default"
+
+
 def call_codex(prompt: str, model: str | None, effort: str | None, workdir: str,
                instructions: str | None = None, schema: dict | None = None) -> dict:
     with tempfile.NamedTemporaryFile("w", suffix=".schema.json", dir=workdir, delete=False) as f:
@@ -246,7 +253,7 @@ def call_codex(prompt: str, model: str | None, effort: str | None, workdir: str,
     try:
         if p.returncode:
             raise RuntimeError(f"codex exited {p.returncode}: {p.stderr[-500:]}")
-        return {"output": json.loads(out.read_text()), "cost_usd": None, "model": model or "codex-default"}
+        return {"output": json.loads(out.read_text()), "cost_usd": None, "model": model or codex_default_model()}
     finally:
         out.unlink(missing_ok=True)
         schema_path.unlink(missing_ok=True)
