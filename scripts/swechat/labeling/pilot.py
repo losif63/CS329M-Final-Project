@@ -171,9 +171,10 @@ def cmd_prompts(args) -> None:
 
 # ---------------------------------------------------------------- label
 
-def call_claude(prompt: str, model: str | None, effort: str | None, workdir: str) -> dict:
+def call_claude(prompt: str, model: str | None, effort: str | None, workdir: str,
+                instructions: str | None = None, schema: dict | None = None) -> dict:
     cmd = ["claude", "-p", "--output-format", "json", "--tools", "", "--no-session-persistence",
-           "--json-schema", json.dumps(SCHEMA), "--system-prompt", RULEBOOK.read_text()]
+           "--json-schema", json.dumps(schema or SCHEMA), "--system-prompt", instructions or RULEBOOK.read_text()]
     if model:
         cmd += ["--model", model]
     if effort:
@@ -188,19 +189,21 @@ def call_claude(prompt: str, model: str | None, effort: str | None, workdir: str
             "model": ",".join(d.get("modelUsage", {})) or model}
 
 
-def call_codex(prompt: str, model: str | None, effort: str | None, workdir: str) -> dict:
-    schema = Path(workdir) / "schema.json"
-    schema.write_text(json.dumps(SCHEMA))
+def call_codex(prompt: str, model: str | None, effort: str | None, workdir: str,
+               instructions: str | None = None, schema: dict | None = None) -> dict:
+    with tempfile.NamedTemporaryFile("w", suffix=".schema.json", dir=workdir, delete=False) as f:
+        f.write(json.dumps(schema or SCHEMA))
+        schema_path = Path(f.name)
     with tempfile.NamedTemporaryFile("r", suffix=".json", dir=workdir, delete=False) as f:
         out = Path(f.name)
     cmd = ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only",
-           "--output-schema", str(schema), "-o", str(out)]
+           "--output-schema", str(schema_path), "-o", str(out)]
     if model:
         cmd += ["-m", model]
     if effort:
         cmd += ["-c", f"model_reasoning_effort={effort}"]
     cmd.append("-")
-    full = RULEBOOK.read_text() + "\n\n---\n\n" + prompt
+    full = (instructions or RULEBOOK.read_text()) + "\n\n---\n\n" + prompt
     p = subprocess.run(cmd, input=full, capture_output=True, text=True, timeout=900, cwd=workdir)
     try:
         if p.returncode:
@@ -208,6 +211,7 @@ def call_codex(prompt: str, model: str | None, effort: str | None, workdir: str)
         return {"output": json.loads(out.read_text()), "cost_usd": None, "model": model or "codex-default"}
     finally:
         out.unlink(missing_ok=True)
+        schema_path.unlink(missing_ok=True)
 
 
 def valid(o: dict) -> bool:

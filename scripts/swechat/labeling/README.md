@@ -6,6 +6,9 @@ human labels, before labeling at scale.
 - `rulebook.md`: the labeling standard. The LLM receives it verbatim as its instructions, and humans should label by it too.
 - `rulebook_v2.md`: draft v2. It adds the agent's own working process to "session", plus a `deliberation` category
   for thinking-aloud comments. It isn't used yet: v1 is the reference until enough v1 misses justify a comparison.
+- `screen.py`: cheap high-recall screen (about 40 sentences per call, comment text only) that shrinks the pool the
+  full judge has to read. On the pilot it kept 27 of 28 Codex positives and all 7 hand positives while flagging about
+  7% of sentences.
 - `pilot.py`: sampling, prompt building, LLM labeling with the Claude or Codex CLI, a blind hand-labeling sheet, and the report.
 
 ```bash
