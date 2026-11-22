@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slop Comment Viewer</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #646b78; --border: #dde1e7;
+    --accent: #2f5bd3; --sel: #d1242f; --sel-bg: #fde7e9; --cmt-bg: #fff6d6; --code-bg: #fbfbfc;
+    --user: #2f5bd3; --assistant: #1a7f4b; --thinking: #8a6d00; --tool: #6f42c1; --result: #57606a; --system: #9a6700;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115; --panel: #171a20; --text: #e6e8ec; --muted: #9aa2b1; --border: #2a2f39;
+      --accent: #7aa2ff; --sel: #ff6b72; --sel-bg: #3a1c20; --cmt-bg: #2e2a16; --code-bg: #13161b;
+      --user: #7aa2ff; --assistant: #4cc38a; --thinking: #d9b54a; --tool: #b392f0; --result: #9aa2b1; --system: #d29922;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --panel: #171a20; --text: #e6e8ec; --muted: #9aa2b1; --border: #2a2f39;
+    --accent: #7aa2ff; --sel: #ff6b72; --sel-bg: #3a1c20; --cmt-bg: #2e2a16; --code-bg: #13161b;
+    --user: #7aa2ff; --assistant: #4cc38a; --thinking: #d9b54a; --tool: #b392f0; --result: #9aa2b1; --system: #d29922;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 16px;
+           background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; white-space: nowrap; }
+  header select, header input, header button {
+    font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 8px; }
+  header select#pick { flex: 1 1 360px; min-width: 0; max-width: 100%; }
+  header input#q { flex: 0 1 200px; min-width: 120px; }
+  header button { cursor: pointer; }
+  header button:hover { border-color: var(--accent); }
+  #count { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px; }
+  .col { min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; min-height: 0; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0;
+              padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: baseline; }
+  .panel h2 .sub { text-transform: none; letter-spacing: 0; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
+  .chip { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); color: var(--muted); }
+  .sent.slop { text-decoration: underline wavy var(--sel); text-underline-offset: 3px; }
+  #labelinfo { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 12px 10px; }
+  #labelinfo .why { flex-basis: 100%; font-size: 12.5px; color: var(--text); }
+  .chip.lab-slop { color: var(--sel); border-color: var(--sel); font-weight: 600; }
+  .chip.lab-not_slop { color: var(--assistant); border-color: var(--assistant); }
+  #comment { margin: 10px 12px 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px;
+             font-family: var(--mono); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere;
+             max-height: 30vh; overflow: auto; color: var(--text); }
+  .sent { cursor: pointer; border-radius: 3px; }
+  .sent:hover { background: var(--sel-bg); }
+  .sent.on { color: var(--sel); font-weight: 600; }
+  #unplaced { margin: 0 12px 10px; font-size: 12px; color: var(--muted); }
+  #unplaced .sent { display: block; font-family: var(--mono); color: var(--text); }
+  #unplaced .sent.on { color: var(--sel); }
+  #convo-panel { flex: 1; }
+  #convo { overflow: auto; padding: 8px 12px; flex: 1; min-height: 0; }
+  .turn { border-left: 3px solid var(--border); padding: 4px 0 4px 10px; margin: 6px 0; }
+  .turn .hd { font-size: 11px; color: var(--muted); display: flex; gap: 6px; align-items: baseline; }
+  .turn .hd b { font-weight: 600; }
+  .turn .bd { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; margin-top: 2px; }
+  .t-user .hd b { color: var(--user); } .t-user { border-color: var(--user); }
+  .t-assistant .hd b { color: var(--assistant); } .t-assistant { border-color: var(--assistant); }
+  .t-summary .hd b { color: var(--system); } .t-summary { border-color: var(--system); }
+  .work { margin: 4px 0 4px 13px; font-size: 12px; color: var(--muted); }
+  .work-head { cursor: pointer; font-family: var(--mono); }
+  .work-head:hover { color: var(--text); }
+  .work .work-list { display: none; margin: 2px 0 6px 14px; font-family: var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .work.open .work-list { display: block; }
+  .turn.clamp .bd { max-height: 18em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+  .turn .more { font-size: 11px; color: var(--accent); cursor: pointer; background: none; border: 0; padding: 0; }
+  .turn.mono .bd { font-family: var(--mono); font-size: 12px; }
+  .t-user_prompt { border-color: var(--user); } .t-user_prompt .hd b { color: var(--user); }
+  .t-assistant_response { border-color: var(--assistant); } .t-assistant_response .hd b { color: var(--assistant); }
+  .t-assistant_thinking { border-color: var(--thinking); } .t-assistant_thinking .hd b { color: var(--thinking); }
+  .t-assistant_thinking .bd { font-style: italic; color: var(--muted); }
+  .t-tool_use { border-color: var(--tool); } .t-tool_use .hd b { color: var(--tool); }
+  .t-tool_result { border-color: var(--result); } .t-tool_result .hd b { color: var(--result); }
+  .t-system_injected, .t-summary { border-color: var(--system); } .t-system_injected .hd b, .t-summary .hd b { color: var(--system); }
+  .note { color: var(--muted); font-size: 12px; text-align: center; margin: 6px 0; }
+  .next { border: 1px dashed var(--sel); border-radius: 6px; padding: 6px 10px; margin: 10px 0 4px; font-size: 12px; }
+  #code { overflow: auto; flex: 1; min-height: 0; font-family: var(--mono); font-size: 12.5px; background: var(--code-bg);
+          border-radius: 0 0 8px 8px; }
+  .ln { display: flex; white-space: pre; }
+  .ln .no { flex: 0 0 auto; width: 4.5em; text-align: right; padding-right: 12px; color: var(--muted); user-select: none; }
+  .ln .tx { flex: 1; padding-right: 12px; }
+  .ln.cmt { background: var(--cmt-bg); }
+  .ln.on { background: var(--sel-bg); box-shadow: inset 3px 0 0 var(--sel); }
+  .ln.on .tx { color: var(--sel); }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  @media (max-width: 900px) {
+    main { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+    #convo-panel, #code-panel { min-height: 60vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Slop Comment Viewer</h1>
+  <input id="q" type="search" placeholder="Filter (file, kind, comment start)…" aria-label="Filter comments">
+  <select id="pick" aria-label="Select comment"></select>
+  <button id="prev" title="Previous (←)">◀</button>
+  <button id="next" title="Next (→)">▶</button>
+  <button id="rand" title="Random (r)">Random</button>
+  <select id="lang" aria-label="Language"><option value="">All languages</option></select>
+  <select id="labelf" aria-label="Label filter" title="Filter by label (keyword hits = the regex proxy, not a label)">
+    <option value="">All labels</option><option value="slop">Slop (any sentence)</option>
+    <option value="cat:session_history">· session history</option><option value="cat:plan_reference">· plan reference</option>
+    <option value="cat:unverifiable_result">· unverifiable result</option><option value="cat:conversation">· conversation</option>
+    <option value="cat:local_environment">· local environment</option><option value="cat:other_session">· other session</option>
+    <option value="marker">Keyword hits</option>
+  </select>
+  <span id="count"></span>
+</header>
+<main>
+  <div class="col">
+    <section class="panel" id="comment-panel">
+      <h2>Comment <span class="sub" id="comment-sub"></span></h2>
+      <div class="meta" id="meta"></div>
+      <div id="comment"></div>
+      <div id="labelinfo"></div>
+      <div id="unplaced"></div>
+    </section>
+    <section class="panel" id="convo-panel">
+      <h2>Conversation before the write <span class="sub" id="convo-sub"></span></h2>
+      <div id="convo"></div>
+    </section>
+  </div>
+  <div class="col">
+    <section class="panel" id="code-panel" style="flex:1">
+      <h2>Source file <span class="sub" id="code-sub"></span></h2>
+      <div id="code"></div>
+    </section>
+  </div>
+</main>
+<script src="index.js"></script>
+<script>
+(() => {
+  const X = window.SWECHAT_INDEX;
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  if (!X) { $("comment").textContent = "index.js not found — run scripts/swechat/viewer/export.py"; return; }
+
+  // index rows: [comment_id, session_idx, language, kind, label, marker_hit]
+  const IDX = X.comments, MAX_OPTIONS = 2000;
+  const byId = new Map(IDX.map((r, i) => [r[0], i]));
+  const hay = IDX.map((r) => `#${r[0]} ${r[2]} ${r[3]} ${r[4]}`.toLowerCase());
+  const base = (p) => p.split("/").pop();
+
+  // ---- on-demand session shards (script tags work from disk and on a static host)
+  const shards = new Map(), waiting = new Map();
+  window.SWECHAT_SHARD = (k, data) => { shards.set(k, data); (waiting.get(k) || []).forEach((f) => f(data)); waiting.delete(k); };
+  function loadShard(k) {
+    if (shards.has(k)) return Promise.resolve(shards.get(k));
+    return new Promise((resolve, reject) => {
+      if (!waiting.has(k)) {
+        waiting.set(k, []);
+        const s = document.createElement("script");
+        s.src = `s/${k}.js`;
+        s.onerror = () => { waiting.delete(k); reject(new Error(`could not load s/${k}.js`)); };
+        document.head.appendChild(s);
+      }
+      waiting.get(k).push(resolve);
+    });
+  }
+
+  // ---- filters
+  const langCount = {};
+  for (const r of IDX) langCount[r[2]] = (langCount[r[2]] || 0) + 1;
+  for (const l of Object.keys(langCount).sort()) { const o = el("option", null, `${l} (${langCount[l]})`); o.value = l; $("lang").appendChild(o); }
+
+  let visible = [], cur = null, curData = null, selSent = 0, token = 0;
+
+  function fillPicker() {
+    const q = $("q").value.trim().toLowerCase(), lang = $("lang").value, lf = $("labelf").value;
+    const words = q ? q.split(/\s+/) : [];
+    visible = [];
+    for (let i = 0; i < IDX.length; i++) {
+      const r = IDX[i];
+      if (lang && r[2] !== lang) continue;
+      if (lf === "marker" && !r[5]) continue;
+      if (lf === "slop" && !r[6]) continue;
+      if (lf.startsWith("cat:") && !(r[6] || "").split(",").includes(lf.slice(4))) continue;
+      if (words.length && !words.every((w) => hay[i].includes(w))) continue;
+      visible.push(i);
+    }
+    const pick = $("pick"); pick.replaceChildren();
+    const shown = visible.slice(0, MAX_OPTIONS);
+    if (cur != null && visible.includes(cur) && !shown.includes(cur)) shown.unshift(cur);
+    for (const i of shown) { const r = IDX[i]; const o = el("option", null, `#${r[0]} · ${r[2]} · ${r[3]} · ${r[4]}`); o.value = i; pick.appendChild(o); }
+    if (cur != null && shown.includes(cur)) pick.value = cur;
+    $("count").textContent = `${visible.length.toLocaleString()} / ${IDX.length.toLocaleString()} comments` +
+      (visible.length > MAX_OPTIONS ? ` (menu shows ${MAX_OPTIONS}; filter or use ◀ ▶ Random)` : "") +
+      ` · ${X.n_sentences.toLocaleString()} sentences total` + (X.n_slop != null ? ` · ${X.n_slop.toLocaleString()} slop` : "");
+  }
+
+  async function show(i, sentIdx = null) {
+    cur = i;
+    const r = IDX[i], my = ++token;
+    if (![...$("pick").options].some((o) => Number(o.value) === i)) fillPicker();  // adds the current comment to the menu
+    $("pick").value = i;
+    $("comment").textContent = "Loading…"; $("convo").replaceChildren(); $("code").replaceChildren();
+    let shard;
+    try { shard = await loadShard(r[1]); } catch (e) { $("comment").textContent = e.message; return; }
+    if (my !== token) return;  // a newer selection superseded this one
+    const c = shard.comments[r[0]], s = shard.sources[c.source_id];
+    curData = { c, s, shard };
+
+    $("comment-sub").textContent = `${c.sentences.length} sentence${c.sentences.length > 1 ? "s" : ""}`;
+    const meta = $("meta"); meta.replaceChildren();
+    for (const t of [s.language || "?", c.kind, "flag: " + s.content_flag, "certified by: " + (s.certified_by || "session"),
+                     s.tool_name, s.repo_id || "no repo", "session " + s.session_id.slice(0, 8), "write @ turn " + s.turn_number])
+      meta.appendChild(el("span", "chip", t));
+
+    const box = $("comment"); box.replaceChildren();
+    const placed = c.sentences.map((x, k) => ({ ...x, k })).filter((x) => x.span).sort((a, b) => a.span[0] - b.span[0]);
+    let pos = 0;
+    for (const x of placed) {
+      if (x.span[0] < pos) continue;
+      if (x.span[0] > pos) box.appendChild(document.createTextNode(c.full_comment.slice(pos, x.span[0])));
+      const sp = el("span", "sent", c.full_comment.slice(x.span[0], x.span[1]));
+      sp.dataset.k = x.k; sp.title = `sentence id ${x.id} · lines ${x.line_start}–${x.line_end}` + (x.lab ? ` · ${x.lab}` : "");
+      if (x.lab === "slop") sp.classList.add("slop");
+      sp.onclick = () => select(x.k);
+      box.appendChild(sp); pos = x.span[1];
+    }
+    box.appendChild(document.createTextNode(c.full_comment.slice(pos)));
+    const un = $("unplaced"); un.replaceChildren();
+    const missing = c.sentences.map((x, k) => ({ ...x, k })).filter((x) => !x.span);
+    if (missing.length) {
+      un.appendChild(el("div", null, "Sentences not located verbatim in the comment text:"));
+      for (const x of missing) { const sp = el("span", "sent", x.text); sp.dataset.k = x.k; sp.onclick = () => select(x.k); un.appendChild(sp); }
+    }
+    renderCode(c, s);
+    renderConvo(c, s, shard.items);
+    if (sentIdx == null) {  // open on the first slop sentence, if any
+      const k = c.sentences.findIndex((x) => x.lab === "slop");
+      sentIdx = k >= 0 ? k : 0;
+    }
+    select(Math.min(sentIdx, c.sentences.length - 1));
+  }
+
+  function renderCode(c, s) {
+    $("code-sub").textContent = s.file_path;
+    const code = $("code"); code.replaceChildren();
+    const cmt = new Set();
+    for (const x of c.sentences) for (let l = x.line_start; l <= x.line_end; l++) cmt.add(l);
+    const frag = document.createDocumentFragment();
+    s.content.split("\n").forEach((line, j) => {
+      const row = el("div", "ln" + (cmt.has(j + 1) ? " cmt" : ""));
+      row.append(el("span", "no", String(j + 1)), el("span", "tx", line || " "));
+      frag.appendChild(row);
+    });
+    code.appendChild(frag);
+  }
+
+  function renderConvo(c, s, items) {
+    const W = s.turn_number;
+    const shown = [];
+    for (const it of items.slice(0, c.item_end)) {
+      if (it.k !== "work") { shown.push(it); continue; }
+      const cl = { ...it, h: it.h.filter((t) => t < W), c: it.c.filter((x) => x[2] < W) };
+      if (cl.h.length || cl.c.length || cl.s) shown.push(cl);
+    }
+    const nText = shown.filter((it) => it.k !== "work").length;
+    const nCalls = shown.reduce((n, it) => n + (it.k === "work" ? it.c.length : 0), 0);
+    $("convo-sub").textContent = `whole session: ${nText} messages, ${nCalls} tool calls (stubbed)`;
+    const box = $("convo"); box.replaceChildren();
+    if (!shown.length) box.appendChild(el("div", "empty", "No conversation before this write."));
+    for (const it of shown) {
+      if (it.k === "work") {
+        const w = el("div", "work");
+        const bits = [];
+        if (it.h.length) bits.push(`thinking${it.h.length > 1 ? " ×" + it.h.length : ""}`);
+        if (it.c.length) bits.push(`${it.c.length} tool call${it.c.length > 1 ? "s" : ""}: ` +
+          it.c.slice(0, 4).map((x) => x[0]).join(", ") + (it.c.length > 4 ? ", …" : ""));
+        if (!bits.length && it.s) bits.push(`system message${it.s > 1 ? " ×" + it.s : ""}`);
+        const head = el("div", "work-head", `▸ agent: ${bits.join(" · ")}`);
+        const list = el("div", "work-list");
+        for (const [name, target, tn] of it.c) list.appendChild(el("div", null, `${name} ${target}`.trim() + `   (turn ${tn})`));
+        if (it.c.length) head.onclick = () => { const open = w.classList.toggle("open"); head.textContent = `${open ? "▾" : "▸"} agent: ${bits.join(" · ")}`; };
+        w.append(head, list);
+        box.appendChild(w);
+        continue;
+      }
+      const t = el("div", `turn t-${it.k}`);
+      const hd = el("div", "hd");
+      hd.append(el("b", null, it.k), el("span", null, `turn ${it.t}`));
+      t.append(hd, el("div", "bd", it.x));
+      box.appendChild(t);
+      if (it.x.length > 1200 || it.x.split("\n").length > 16) {
+        t.classList.add("clamp");
+        const more = el("button", "more", "show more");
+        more.onclick = () => { const on = t.classList.toggle("clamp"); more.textContent = on ? "show more" : "show less"; };
+        t.appendChild(more);
+      }
+    }
+    const nx = el("div", "next");
+    nx.textContent = `→ next: ${s.tool_name} ${base(s.file_path)} at turn ${s.turn_number} (flag: ${s.content_flag}) — produces the source file shown on the right`;
+    box.appendChild(nx);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function showLabel(x) {
+    const box = $("labelinfo"); box.replaceChildren();
+    if (!x.lab) { box.appendChild(el("span", "chip", "no label")); return; }
+    const chip = el("span", "chip lab-" + x.lab, x.lab === "not_slop" ? "not slop" : x.lab);
+    box.appendChild(chip);
+    if (x.cat) box.appendChild(el("span", "chip", x.cat.replace("_", " ")));
+    box.appendChild(el("span", "chip", x.src === "screen_negative" ? "not flagged by the screen" : "judged with session"));
+    if (x.why) box.appendChild(el("div", "why", x.why));
+  }
+
+  function select(k) {
+    if (!curData) return;
+    const x = curData.c.sentences[k];
+    showLabel(x);
+    selSent = k;
+    history.replaceState(null, "", `#c=${IDX[cur][0]}&s=${k}`);
+    document.querySelectorAll(".sent").forEach((e) => e.classList.toggle("on", Number(e.dataset.k) === k));
+    document.querySelectorAll(".ln.on").forEach((e) => e.classList.remove("on"));
+    const code = $("code");
+    let first = null;
+    for (let l = x.line_start; l <= x.line_end; l++) {
+      const row = code.children[l - 1];
+      if (row) { row.classList.add("on"); first = first || row; }
+    }
+    if (first) code.scrollTop = Math.max(0, first.offsetTop - code.clientHeight / 3);
+  }
+
+  function step(d) {
+    if (!visible.length) return;
+    const at = visible.indexOf(cur);
+    show(visible[(at + d + visible.length) % visible.length]);
+  }
+  const refilter = () => { fillPicker(); if (visible.length && !visible.includes(cur)) show(visible[0]); };
+  $("q").addEventListener("input", refilter);
+  $("lang").addEventListener("change", refilter);
+  $("labelf").addEventListener("change", refilter);
+  $("pick").addEventListener("change", (e) => show(Number(e.target.value)));
+  $("prev").onclick = () => step(-1);
+  $("next").onclick = () => step(1);
+  $("rand").onclick = () => visible.length && show(visible[Math.floor(Math.random() * visible.length)]);
+  document.addEventListener("keydown", (e) => {
+    if (e.target.matches("input[type=search], select")) return;
+    if (e.key === "ArrowRight") step(1);
+    else if (e.key === "ArrowLeft") step(-1);
+    else if (e.key === "r") $("rand").click();
+    else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && curData) {
+      const n = curData.c.sentences.length;
+      e.preventDefault();
+      select((selSent + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+    }
+  });
+
+  fillPicker();
+  const m = location.hash.match(/c=(\d+)/), ms = location.hash.match(/s=(\d+)/);
+  const start = m && byId.has(Number(m[1])) ? byId.get(Number(m[1])) : 0;
+  if (X.only_slop) document.querySelector("header h1").textContent = "Slop Comments";
+  if (IDX.length) show(start, ms ? Number(ms[1]) : null); else $("comment").textContent = "No comments in index.js.";
+})();
+</script>
+</body>
+</html>
